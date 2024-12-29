@@ -1,4 +1,7 @@
-use crate::tokens::{Token, Tokens};
+use crate::{
+    error::{self, error},
+    tokens::{Token, Tokens},
+};
 
 pub struct Scanner<'a> {
     source: &'a Vec<u8>,
@@ -18,8 +21,9 @@ impl<'a> Scanner<'a> {
     }
 
     fn advance(&mut self) -> u8 {
+        let ch = self.source[self.current_index];
         self.current_index += 1;
-        self.source[self.current_index]
+        ch
     }
 
     fn match_next(&mut self, expected: u8) -> bool {
@@ -27,7 +31,7 @@ impl<'a> Scanner<'a> {
             return false;
         }
 
-        if self.source[self.current_index + 1] != expected {
+        if self.source[self.current_index] != expected {
             return false;
         }
         self.current_index += 1;
@@ -37,21 +41,104 @@ impl<'a> Scanner<'a> {
     fn add_token(&self, token_type: Tokens) -> Token {
         //lol
         let text: String =
-            String::from_utf8_lossy(&self.source[self.start + 1..=self.current_index]).to_string();
+            String::from_utf8_lossy(&self.source[self.start..self.current_index]).to_string();
 
         Token::new(token_type, text, self.line)
     }
 
+    fn is_at_end_of_source(&self) -> bool {
+        self.current_index >= self.source.len() - 1
+    }
+
+    fn string_literal(&mut self) -> Token {
+        while (self.peek() != 34 && !self.is_at_end_of_source()) {
+            if self.peek() == 10 {
+                self.line += 1;
+            };
+            self.advance();
+        }
+
+        if (self.current_index > self.source.len() - 1) {
+            error(self.line, "unterminated string literal".to_owned());
+        }
+
+        self.advance();
+        let lexeme: String =
+            String::from_utf8_lossy(&self.source[self.start + 1..self.current_index - 1])
+                .to_string();
+
+        Token::new(Tokens::String, lexeme, self.line)
+    }
+
+    fn number_literal(&mut self) -> Token {
+        while (self.peek().is_ascii_digit()) {
+            self.advance();
+        }
+
+        if (self.peek() == 46 && self.peek_next().is_ascii_digit()) {
+            self.advance();
+            while (self.peek().is_ascii_digit()) {
+                self.advance();
+            }
+        }
+        let lexeme: String =
+            String::from_utf8_lossy(&self.source[self.start..self.current_index]).to_string();
+
+        Token::new(Tokens::Number, lexeme, self.line)
+    }
     fn peek(&self) -> u8 {
         self.source[self.current_index]
     }
 
+    fn peek_next(&self) -> u8 {
+        if self.current_index + 1 >= self.source.len() {
+            return 0;
+        }
+
+        return self.source[self.current_index];
+    }
+
+    fn get_keywords(&self, ident: &str) -> Tokens {
+        match ident {
+            "and" => Tokens::And,
+            "class" => Tokens::Class,
+            "else" => Tokens::Else,
+            "false" => Tokens::False,
+            "for" => Tokens::For,
+            "fun" => Tokens::Fun,
+            "if" => Tokens::If,
+            "nil" => Tokens::Nil,
+            "or" => Tokens::Or,
+            "print" => Tokens::Print,
+            "return" => Tokens::Return,
+            "super" => Tokens::Super,
+            "this" => Tokens::This,
+            "var" => Tokens::Var,
+            "true" => Tokens::True,
+            "while" => Tokens::While,
+            _ => Tokens::IDENT,
+        }
+    }
+
+    fn keywords(&mut self) -> Token {
+        while (self.peek().is_ascii_alphanumeric()) {
+            self.advance();
+        }
+
+        let ident_value: String =
+            String::from_utf8_lossy(&self.source[self.start..self.current_index]).to_string();
+
+        let ident: Tokens = self.get_keywords(&ident_value);
+
+        Token::new(ident, ident_value, self.line)
+    }
     pub fn scan_tokens(&mut self) -> Vec<Token> {
         let mut tokens: Vec<Token> = vec![];
 
-        while self.current_index < self.source.len() - 1 {
+        while !self.is_at_end_of_source() {
             self.start = self.current_index;
             let next_char = self.advance();
+
             match next_char {
                 40 => {
                     tokens.push(self.add_token(Tokens::LeftParen));
@@ -116,8 +203,11 @@ impl<'a> Scanner<'a> {
                     };
                     tokens.push(self.add_token(Tk));
                 }
-                62 => {
-                    let Tk: Option<Tokens> = match self.match_next(61) {
+                34 => {
+                    tokens.push(self.string_literal());
+                }
+                47 => {
+                    let Tk: Option<Tokens> = match self.match_next(47) {
                         true => None,
                         false => Some(Tokens::Slash),
                     };
@@ -127,15 +217,20 @@ impl<'a> Scanner<'a> {
                             tokens.push(self.add_token(token));
                         }
                         None => {
-                            while self.peek() != 10 && self.current_index < self.source.len() - 1
-                            {
+                            while self.peek() != 10 && !self.is_at_end_of_source() {
                                 self.advance();
                             }
                         }
                     }
                 }
-                _ => {
-                    // error(self.line, "unexpected char".to_owned());
+                default => {
+                    if default.is_ascii_digit() {
+                        tokens.push(self.number_literal());
+                    } else if default.is_ascii_alphanumeric() {
+                        tokens.push(self.keywords())
+                    } else {
+                        error(self.line, "unexpected char".to_owned());
+                    }
                 }
             }
         }

@@ -1,2 +1,4 @@
 // hi this is a comment
-var language = 'lox';
+var language = "lox";
+
+var val = 123;
